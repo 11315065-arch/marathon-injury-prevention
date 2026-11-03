@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>馬拉松傷害預防系統 - 即時儀表板</title>
+  <script src="https://unpkg.com/mqtt@4.3.7/dist/mqtt.min.js"></script>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #f0f2f5;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 30px;
+      margin: 0;
+    }
+    h1 { color: #1a365d; margin-bottom: 20px; }
+    .status-card {
+      background: #ffffff;
+      border-radius: 12px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+      padding: 12px 25px;
+      margin-bottom: 20px;
+      font-weight: bold;
+      color: #718096;
+    }
+    .container {
+      display: flex;
+      gap: 20px;
+      flex-wrap: wrap;
+      justify-content: center;
+      max-width: 900px;
+    }
+    .card {
+      background: white;
+      border-radius: 15px;
+      padding: 20px;
+      width: 180px;
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+      text-align: center;
+    }
+    .card h2 { margin: 0; font-size: 1rem; color: #4a5568; }
+    .value { font-size: 2.2rem; font-weight: bold; margin: 10px 0; color: #2b6cb0; }
+    .unit { font-size: 1rem; color: #a0aec0; }
+    .alert-card {
+      width: 100%;
+      background: #e6fffa;
+      border: 2px solid #38b2ac;
+      border-radius: 12px;
+      padding: 15px;
+      text-align: center;
+      font-size: 1.2rem;
+      font-weight: bold;
+      color: #234e52;
+      margin-top: 15px;
+      transition: all 0.3s ease;
+    }
+    .btn-group {
+      margin-top: 20px;
+      display: flex;
+      gap: 10px;
+    }
+    button {
+      padding: 10px 18px;
+      border: none;
+      border-radius: 8px;
+      background-color: #3182ce;
+      color: white;
+      font-size: 0.95rem;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    button:hover { background-color: #2b6cb0; }
+    .btn-danger { background-color: #e53e3e; }
+    .btn-danger:hover { background-color: #c53030; }
+    .time { font-size: 0.85rem; color: #a0aec0; margin-top: 15px; }
+  </style>
+</head>
+<body>
+
+
+  <h1>🏃‍♂️ 馬拉松傷害預防 - 即時儀表板</h1>
+
+
+  <div class="status-card">
+    連線狀態：<span id="status" style="color: #e53e3e;">連線中...</span>
+  </div>
+
+
+  <div class="container">
+    <div class="card">
+      <h2>體表 / 環境溫度</h2>
+      <div class="value"><span id="temp">--</span> <span class="unit">°C</span></div>
+    </div>
+
+
+    <div class="card">
+      <h2>環境濕度</h2>
+      <div class="value"><span id="hum">--</span> <span class="unit">%</span></div>
+    </div>
+
+
+    <div class="card">
+      <h2>腿部肌電訊號 (EMG)</h2>
+      <div class="value"><span id="emg">--</span></div>
+    </div>
+
+
+    <!-- 陀螺儀 / 加速度計狀態 -->
+    <div class="card">
+      <h2>姿勢 / 姿態狀態</h2>
+      <div class="value" style="font-size: 1.5rem;"><span id="acc">正常</span></div>
+    </div>
+
+
+    <div id="alert-box" class="alert-card">
+      🟢 肌肉與體溫狀態：正常
+    </div>
+  </div>
+
+
+  <!-- 按鈕區：已移除模擬跌倒按鈕，保留抽筋模擬與陀螺儀校正 -->
+  <div class="btn-group">
+    <button class="btn-danger" onclick="simEMG(2800)">模擬 EMG 異常抽筋 (2800)</button>
+    <button style="background-color: #4a5568;" onclick="calibrateGyro()">⚖️ 校正陀螺儀</button>
+  </div>
+
+
+  <div class="time">最後更新時間：<span id="update-time">--</span></div>
+
+
+<script>
+    // 1. Make Webhook 網址
+    const MAKE_WEBHOOK_URL = 'https://hook.us2.make.com/ao65ui2r58rbia51ff85qva8omw7s83b';
+
+
+    let isLineNotified = false;
+    let isFallNotified = false; // 跌倒專用通報鎖
+    let packetCount = 0;
+
+
+    // 2. MQTTGO 連線設定
+    const broker = 'wss://mqttgo.io:8084/mqtt';
+    const topic = 'marathon/demo';
+
+
+    const client = mqtt.connect(broker, {
+      clientId: 'Web_Dashboard_' + Math.random().toString(16).substr(2, 8),
+      clean: true,
+      connectTimeout: 5000,
+      reconnectPeriod: 2000
+    });
+
+
+    client.on('connect', () => {
+      console.log('連線成功！');
+      document.getElementById('status').innerText = '已成功連線';
+      document.getElementById('status').style.color = '#38a169';
+      client.subscribe(topic);
+    });
+
+
+    client.on('error', (err) => {
+      console.error('連線失敗:', err);
+      document.getElementById('status').innerText = '連線失敗';
+      document.getElementById('status').style.color = '#e53e3e';
+    });
+
+
+    client.on('offline', () => {
+      document.getElementById('status').innerText = '連線中 / 重新連線中...';
+      document.getElementById('status').style.color = '#dd6b20';
+    });
+
+
+    let isTempNotified = false; // 體溫過高專用通報鎖
+
+
+    // 收到 MQTT 訊息時處理
+    client.on('message', (topic, message) => {
+      console.log('收到 MQTT 資料：', message.toString());
+     
+      packetCount++;
+      document.getElementById('update-time').innerText = new Date().toLocaleTimeString();
+
+
+      try {
+        const data = JSON.parse(message.toString());
+
+
+        // 1. 更新濕度
+        const humValue = data.hum !== undefined ? data.hum : (data.humidity !== undefined ? data.humidity : (data.humi !== undefined ? data.humi : null));
+        if (humValue !== null) {
+          document.getElementById('hum').innerText = humValue;
+        }
+
+
+        // 2. 更新溫度並檢查體溫是否過高 (例如 >= 38.0 °C)
+        if (data.temp !== undefined) {
+          document.getElementById('temp').innerText = data.temp;
+          checkTempAlert(parseFloat(data.temp));
+        }
+
+
+        // 3. 更新 EMG 數據與抽筋檢查
+        if (data.emg !== undefined) {
+          updateEMG(data.emg, data.temp || document.getElementById('temp').innerText);
+        }
+
+
+        // 4. 判斷姿態/跌倒
+        if (data.fall !== undefined || data.acc !== undefined) {
+          checkFallAlert(data);
+        }
+
+
+      } catch (e) {
+        console.error('JSON 解析失敗：', e);
+      }
+    });
+
+
+    // 4. 抽筋狀態判斷
+    function updateEMG(emgVal, tempVal) {
+      document.getElementById('emg').innerText = emgVal;
+      const alertBox = document.getElementById('alert-box');
+
+
+      if (emgVal > 2000) {
+        alertBox.style.backgroundColor = '#fff5f5';
+        alertBox.style.borderColor = '#e53e3e';
+        alertBox.style.color = '#9b2c2c';
+        alertBox.innerText = '⚠️ 警告：肌肉電位過高，有抽筋或嚴重疲勞風險！';
+
+
+        if (!isLineNotified) {
+          const currentTime = new Date().toLocaleTimeString();
+          const crampMsg = `⚠️【肌肉抽筋警告】\n選手肌電訊號異常！\n- EMG 數值：${emgVal}\n- 體溫：${tempVal || 36.5}°C\n- 時間：${currentTime}\n請適度休息並補充電解質。`;
+
+
+          sendLineAlert('CRAMP_ALERT', emgVal, tempVal || 36.5, crampMsg);
+          isLineNotified = true;
+        }
+      } else if (!isFallNotified) {
+        alertBox.style.backgroundColor = '#e6fffa';
+        alertBox.style.borderColor = '#38b2ac';
+        alertBox.style.color = '#234e52';
+        alertBox.innerText = '🟢 肌肉與體溫狀態：正常';
+       
+        isLineNotified = false;
+      }
+    }
+
+
+    // 5. 跌倒判斷邏輯（ESP32 傳送 fall: true 時觸發）
+    function checkFallAlert(data) {
+      const accElem = document.getElementById('acc');
+      const alertBox = document.getElementById('alert-box');
+     
+      const isFalling = data.fall === true || data.fall === 1 || (data.acc && data.acc > 2.5);
+
+
+      if (isFalling) {
+        accElem.innerText = '🚨 跌倒！';
+        accElem.style.color = '#e53e3e';
+
+
+        alertBox.style.backgroundColor = '#fff5f5';
+        alertBox.style.borderColor = '#e53e3e';
+        alertBox.style.color = '#9b2c2c';
+        alertBox.innerText = '🚨 警告：偵測到選手衝擊跌倒，請立即確認安全！';
+
+
+        if (!isFallNotified) {
+          const currentTime = new Date().toLocaleTimeString();
+          const fallMsg = `🚨【跌倒緊急通報】\n選手發生衝擊跌倒！\n- 體溫：${document.getElementById('temp').innerText}°C\n- 時間：${currentTime}\n請工作人員立即確認安全！`;
+         
+          sendLineAlert('FALL_ALERT', document.getElementById('emg').innerText, document.getElementById('temp').innerText, fallMsg);
+          isFallNotified = true;
+        }
+      } else {
+        accElem.innerText = '正常';
+        accElem.style.color = '#2b6cb0';
+        isFallNotified = false;
+      }
+    }
+
+
+    // 6. 抽筋模擬測試功能
+    function triggerSimulatedCramp() {
+      console.log('🧪 觸發抽筋模擬測試...');
+      simEMG(2800);
+    }
+
+
+    function simEMG(value) {
+      console.log('🧪 模擬 EMG 數值：', value);
+      const currentTemp = document.getElementById('temp').innerText !== '--' ? document.getElementById('temp').innerText : 37.2;
+      updateEMG(value, currentTemp);
+    }
+
+
+   
+    // 7. 發送陀螺儀校正指令給 ESP32 並重置網頁儀表板狀態
+    function calibrateGyro() {
+      if (!client || !client.connected) {
+        alert('MQTT 未連線，無法發送校正指令！');
+        return;
+      }
+     
+      const cmdTopic = 'marathon/cmd';
+      const payload = JSON.stringify({ command: 'CALIBRATE' });
+
+
+      client.publish(cmdTopic, payload, (err) => {
+        if (!err) {
+          console.log('✅ 已發送校正指令至 ESP32！');
+         
+          // 1. 強制重置姿勢狀態卡片為「正常」
+          const accElem = document.getElementById('acc');
+          if (accElem) {
+            accElem.innerText = '正常';
+            accElem.style.color = '#2b6cb0';
+          }
+
+
+          // 2. 重置跌倒告警狀態與警示框
+          isFallNotified = false;
+          const alertBox = document.getElementById('alert-box');
+          if (alertBox && !isLineNotified) { // 如果當前也沒有抽筋告警，才恢復綠框
+            alertBox.style.backgroundColor = '#e6fffa';
+            alertBox.style.borderColor = '#38b2ac';
+            alertBox.style.color = '#234e52';
+            alertBox.innerText = '🟢 肌肉與體溫狀態：正常';
+          }
+
+
+          alert('已發送校正指令！儀表板姿態已重置為正常。');
+        } else {
+          console.error('❌ 發送校正指令失敗：', err);
+        }
+      });
+    }
+
+
+    // 體溫過高檢查與通報
+    function checkTempAlert(tempVal) {
+      if (tempVal >= 37.5) {
+        const alertBox = document.getElementById('alert-box');
+        alertBox.style.backgroundColor = '#fff5f5';
+        alertBox.style.borderColor = '#e53e3e';
+        alertBox.style.color = '#9b2c2c';
+        alertBox.innerText = `🔥 警告：體溫過高 (${tempVal}°C)，有熱中暑或熱衰竭風險！`;
+
+
+        if (!isTempNotified) {
+          const currentTime = new Date().toLocaleTimeString();
+          const tempMsg = `🔥【體溫過高警告】\n選手體溫異常升溫！\n- 當前體溫：${tempVal}°C\n- 通報時間：${currentTime}\n請立即暫緩運動，前往陰涼處補充水分！`;
+
+
+          sendLineAlert('TEMP_ALERT', document.getElementById('emg').innerText, tempVal, tempMsg);
+          isTempNotified = true;
+        }
+      } else {
+        isTempNotified = false; // 體溫恢復正常重置鎖
+      }
+    }
+
+
+    // 8. 統一發送至 Make Webhook (包含事件類型說明)
+    function sendLineAlert(eventType, emg, temp, msgText) {
+      console.log(`正在傳送 [${eventType}] 資料至 Make Webhook...`);
+
+
+      fetch(MAKE_WEBHOOK_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          event: eventType,
+          emg: emg,
+          temp: temp,
+          message: msgText
+        })
+      })
+      .then(res => {
+        if (res.ok) {
+          console.log('✅ 已成功發送告警資料至 Make Webhook！');
+        } else {
+          console.error('❌ Make 回傳狀態碼異常：', res.status);
+        }
+      })
+      .catch(err => console.error('❌ 發送失敗：', err));
+    }
+</script>
+</body>
+</html>
