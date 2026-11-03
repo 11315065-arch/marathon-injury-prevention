@@ -106,6 +106,16 @@
       <div class="value"><span id="emg">--</span></div>
     </div>
 
+    <div class="card">
+      <h2>即時心率</h2>
+      <div class="value"><span id="heartRate">--</span> <span class="unit">BPM</span></div>
+    </div>
+
+    <div class="card">
+      <h2>血氧濃度</h2>
+      <div class="value"><span id="spo2">--</span> <span class="unit">%</span></div>
+    </div>
+
 
     <!-- 陀螺儀 / 加速度計狀態 -->
     <div class="card">
@@ -209,7 +219,20 @@
         }
 
 
-        // 4. 判斷姿態/跌倒
+        // 4. 更新 MAX30102 心率與血氧
+        if (data.heartRate !== undefined) {
+          const hr = Number(data.heartRate);
+          document.getElementById('heartRate').innerText =
+            Number.isFinite(hr) && hr > 0 ? hr : '--';
+        }
+
+        if (data.spo2 !== undefined) {
+          const oxygen = Number(data.spo2);
+          document.getElementById('spo2').innerText =
+            Number.isFinite(oxygen) && oxygen > 0 && oxygen <= 100 ? oxygen : '--';
+        }
+
+        // 5. 判斷姿態/跌倒
         if (data.fall !== undefined || data.acc !== undefined) {
           checkFallAlert(data);
         }
