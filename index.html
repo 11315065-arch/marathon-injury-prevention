@@ -90,7 +90,7 @@
 
   <div class="container">
     <div class="card">
-      <h2>體表 / 環境溫度</h2>
+      <h2>體表溫度</h2>
       <div class="value"><span id="temp">--</span> <span class="unit">°C</span></div>
     </div>
 
@@ -100,7 +100,14 @@
       <div class="value"><span id="hum">--</span> <span class="unit">%</span></div>
     </div>
 
-
+  <div class="card">
+    <h2>環境氣壓</h2>
+    <div class="value">
+      <span id="pressure">--</span>
+      <span class="unit">hPa</span>
+    </div>
+  </div>
+    
     <div class="card">
       <h2>腿部肌電訊號 (EMG)</h2>
       <div class="value"><span id="emg">--</span></div>
@@ -205,7 +212,11 @@
           document.getElementById('hum').innerText = humValue;
         }
 
-
+        // 更新 BME280 氣壓
+        if (data.pressure !== undefined) {
+          document.getElementById('pressure').innerText =
+            Number(data.pressure).toFixed(1);
+        }
         // 2. 更新溫度並檢查體溫是否過高 (例如 >= 38.0 °C)
         if (data.temp !== undefined) {
           document.getElementById('temp').innerText = data.temp;
